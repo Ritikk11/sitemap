@@ -1,0 +1,59 @@
+name: Hourly Sitemap Update
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Runs every hour
+  workflow_dispatch: # Allows manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  update-sitemap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch and Modify Sitemap
+        run: |
+          npm install fast-xml-parser
+          node -e "
+            const { XMLParser, XMLBuilder } = require('fast-xml-parser');
+            const fs = require('fs');
+            
+            async function run() {
+              const res = await fetch('https://apkmatrix.in/sitemap.xml');
+              const xml = await res.text();
+              const parser = new XMLParser({ ignoreAttributes: false, allowBooleanAttributes: true });
+              const parsed = parser.parse(xml);
+              
+              if (parsed && parsed.urlset && parsed.urlset.url) {
+                const urls = Array.isArray(parsed.urlset.url) ? parsed.urlset.url : [parsed.urlset.url];
+                for (const u of urls) {
+                  if (u.loc) {
+                    const locStr = String(typeof u.loc === 'object' ? u.loc['#text'] || u.loc : u.loc);
+                    const parsedUrl = new URL(locStr);
+                    parsedUrl.searchParams.set('m', '1');
+                    u.loc = parsedUrl.toString();
+                  }
+                }
+                const builder = new XMLBuilder({ ignoreAttributes: false, format: true });
+                const newXml = builder.build(parsed);
+                fs.writeFileSync('sitemap.xml', newXml);
+              }
+            }
+            run().catch(console.error);
+          "
+
+      - name: Commit and Push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add sitemap.xml
+          git diff --quiet && git diff --staged --quiet || (git commit -m \"Automated update sitemap with ?m=1\" && git push)
